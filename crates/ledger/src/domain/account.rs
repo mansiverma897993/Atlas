@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn cannot_open_twice() {
-        let mut acc = opened();
+        let acc = opened();
         let err = acc
             .decide(AccountCommand::Open {
                 owner: OwnerId::new(),
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn currency_mismatch_rejected() {
-        let mut acc = opened();
+        let acc = opened();
         let err = acc
             .decide(AccountCommand::Credit {
                 transfer_id: TransferId::new(),

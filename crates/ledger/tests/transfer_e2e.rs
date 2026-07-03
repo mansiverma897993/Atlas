@@ -11,7 +11,7 @@ use ledger::adapters::outbound::memory::{
 };
 use ledger::application::commands::CommandHandlers;
 use ledger::application::ports::TransferStore;
-use ledger::application::queries::{QueryHandlers, ReadModel};
+use ledger::application::queries::QueryHandlers;
 use ledger::application::saga::SagaOrchestrator;
 use ledger::domain::account::AccountCommand;
 use ledger::domain::transfer::TransferState;
