@@ -1,0 +1,392 @@
+# =============================================================================
+# Ledger Platform — full local stack (docs/ARCHITECTURE.md §8).
+#
+#   docker compose up --build
+#
+# Brings up: Postgres (3 DBs) · Redis · Redpanda · OTel Collector · Jaeger ·
+# Prometheus · Grafana · and the 5 app services (gateway, identity, ledger,
+# notification, worker), plus a one-shot `migrate` job that applies SQL
+# migrations BEFORE the services start (migrations never run at app boot —
+# docs/CONVENTIONS.md §Databases).
+#
+# All ports / env vars / db names / topics follow docs/CONVENTIONS.md.
+# Port map (host → container):
+#   gateway      8080 http · 9100 metrics
+#   identity     8081 health · 50051 grpc · 9101 metrics
+#   ledger       8082 health · 50052 grpc · 9102 metrics
+#   notification 8083 ws+health · 9103 metrics
+#   worker       8084 health · 9104 metrics
+#   postgres 5432 · redis 6379 · redpanda 9092(kafka)/9644(admin)
+#   redpanda-console 8090 · jaeger 16686(ui) · prometheus 9090 · grafana 3000
+#   otel-collector 4317(grpc)/4318(http)/8888(self-metrics)/8889(prom-export)
+# =============================================================================
+
+# One shared user-defined bridge network so services resolve each other by name
+# (e.g. APP__DATABASE__URL=postgres://app:app@postgres:5432/ledger_db).
+networks:
+  ledger-net:
+    driver: bridge
+
+# Named volumes so data survives `docker compose down` (but not `down -v`).
+volumes:
+  postgres-data:
+  redis-data:
+  redpanda-data:
+  prometheus-data:
+  grafana-data:
+
+# -----------------------------------------------------------------------------
+# YAML anchors: shared fragments to keep the 5 service blocks DRY.
+# -----------------------------------------------------------------------------
+x-app-build: &app-build
+  # All services build from the SAME parameterized Dockerfile; only SERVICE differs.
+  context: ..
+  dockerfile: deploy/docker/Dockerfile
+
+x-app-common-env: &app-common-env
+  RUN_ENV: docker
+  APP__REDIS__URL: redis://redis:6379
+  APP__KAFKA__BROKERS: redpanda:9092
+  APP__OTEL__ENDPOINT: http://otel-collector:4317
+  APP__LOG__LEVEL: info
+  APP__LOG__FORMAT: json
+  # JWT settings shared across services (verify via JWKS from identity).
+  APP__JWT__ISSUER: https://identity.local
+  APP__JWT__ACCESS_TTL_SECONDS: "900"
+  APP__JWT__REFRESH_TTL_SECONDS: "2592000"
+
+services:
+  # ===========================================================================
+  # Infrastructure
+  # ===========================================================================
+
+  # --- PostgreSQL: one server, three databases (created by init script) -------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ledger-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # The default `postgres` db exists; our init script creates the 3 app DBs.
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Runs ONCE on first init (empty volume). Creates identity_db/ledger_db/worker_db + app role.
+      - ./postgres/init-databases.sql:/docker-entrypoint-initdb.d/00-init-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [ledger-net]
+
+  # --- Redis: cache, distributed locks, rate-limit, presence, idempotency -----
+  redis:
+    image: redis:7-alpine
+    container_name: ledger-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [ledger-net]
+
+  # --- Redpanda: Kafka-API event backbone, single node, NO zookeeper ----------
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    container_name: ledger-redpanda
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container            # single-node, low-resource dev profile
+      - --smp=1
+      - --default-log-level=info
+      # Advertise the in-network name so app containers connect via redpanda:9092,
+      # while host tools use localhost:19092.
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "9092:9092"     # Kafka API (in-network name)
+      - "19092:19092"   # Kafka API (host access)
+      - "9644:9644"     # Admin / Prometheus metrics endpoint (/public_metrics)
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [ledger-net]
+
+  # --- Redpanda Console: optional web UI for topics/consumer groups -----------
+  redpanda-console:
+    image: redpandadata/console:v2.7.2
+    container_name: ledger-redpanda-console
+    profiles: ["tools"]                 # opt-in: `docker compose --profile tools up`
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "8090:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    networks: [ledger-net]
+
+  # --- OpenTelemetry Collector: OTLP in → Jaeger (traces) + Prometheus (metrics)
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.109.0
+    container_name: ledger-otel-collector
+    command: ["--config=/etc/otel/otel-collector.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otel/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"     # OTLP gRPC (services send here: APP__OTEL__ENDPOINT)
+      - "4318:4318"     # OTLP HTTP
+      - "8888:8888"     # Collector's own telemetry (scraped by Prometheus)
+      - "8889:8889"     # Prometheus exporter: app metrics forwarded from OTLP
+    depends_on:
+      jaeger:
+        condition: service_started
+    networks: [ledger-net]
+
+  # --- Jaeger: distributed trace storage + UI (all-in-one) --------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: ledger-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"    # accept OTLP directly from the collector
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14250:14250"   # model.proto (collector → jaeger)
+    networks: [ledger-net]
+
+  # --- Prometheus: scrapes all service /metrics + collector + redpanda --------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: ledger-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [ledger-net]
+
+  # --- Grafana: dashboards (Prometheus + Jaeger datasources, provisioned) -----
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: ledger-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      # Provisioning: datasources + dashboard providers loaded on startup.
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+    networks: [ledger-net]
+
+  # ===========================================================================
+  # Migration one-shot (init-container analog).
+  #
+  # Runs `sqlx migrate run` against each database, then EXITS. Every app service
+  # `depends_on` this with `condition: service_completed_successfully`, so no
+  # service starts until schemas are applied. Uses the same workspace image but
+  # overrides the entrypoint. Assumes `sqlx-cli` is available in the builder;
+  # here we call it from a small tooling image to avoid baking it into runtime.
+  # ===========================================================================
+  migrate:
+    image: rust:1.83-slim-bookworm
+    container_name: ledger-migrate
+    working_dir: /app
+    # Install sqlx-cli once, then run the per-context migrations in order.
+    # migrations/<db>/ layout per docs/CONVENTIONS.md §Databases.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config >/dev/null
+        cargo install sqlx-cli --no-default-features --features native-tls,postgres --locked
+        echo "Applying identity_db migrations..."
+        sqlx migrate run --source migrations/identity --database-url "postgres://app:app@postgres:5432/identity_db"
+        echo "Applying ledger_db migrations..."
+        sqlx migrate run --source migrations/ledger   --database-url "postgres://app:app@postgres:5432/ledger_db"
+        echo "Applying worker_db migrations..."
+        sqlx migrate run --source migrations/worker   --database-url "postgres://app:app@postgres:5432/worker_db"
+        echo "Migrations complete."
+    volumes:
+      - ..:/app:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks: [ledger-net]
+
+  # ===========================================================================
+  # Application services (all build from deploy/docker/Dockerfile via SERVICE).
+  # ===========================================================================
+
+  # --- Gateway: public REST/OpenAPI edge --------------------------------------
+  gateway:
+    build:
+      <<: *app-build
+      args:
+        SERVICE: gateway
+    image: ledger/gateway:local
+    container_name: ledger-gateway
+    environment:
+      <<: *app-common-env
+      APP__OTEL__SERVICE_NAME: gateway
+      APP__SERVER__HTTP_ADDR: 0.0.0.0:8080
+      APP__SERVER__METRICS_ADDR: 0.0.0.0:9100
+      # Upstream gRPC targets the gateway routes to.
+      APP__UPSTREAMS__IDENTITY: http://identity:50051
+      APP__UPSTREAMS__LEDGER: http://ledger:50052
+      HEALTH_PORT: "8080"               # container healthcheck target
+    ports:
+      - "8080:8080"     # public REST + Swagger
+      - "9100:9100"     # metrics
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      identity:
+        condition: service_started
+      ledger:
+        condition: service_started
+    networks: [ledger-net]
+
+  # --- Identity: authn/authz gRPC + outbox ------------------------------------
+  identity:
+    build:
+      <<: *app-build
+      args:
+        SERVICE: identity
+    image: ledger/identity:local
+    container_name: ledger-identity
+    environment:
+      <<: *app-common-env
+      APP__OTEL__SERVICE_NAME: identity
+      APP__SERVER__HTTP_ADDR: 0.0.0.0:8081       # health only
+      APP__SERVER__GRPC_ADDR: 0.0.0.0:50051
+      APP__SERVER__METRICS_ADDR: 0.0.0.0:9101
+      APP__DATABASE__URL: postgres://app:app@postgres:5432/identity_db
+      APP__DATABASE__MAX_CONNECTIONS: "20"
+      HEALTH_PORT: "8081"
+    ports:
+      - "8081:8081"
+      - "50051:50051"
+      - "9101:9101"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks: [ledger-net]
+
+  # --- Ledger: event-sourced ledger gRPC + CQRS -------------------------------
+  ledger:
+    build:
+      <<: *app-build
+      args:
+        SERVICE: ledger
+    image: ledger/ledger:local
+    container_name: ledger-ledger
+    environment:
+      <<: *app-common-env
+      APP__OTEL__SERVICE_NAME: ledger
+      APP__SERVER__HTTP_ADDR: 0.0.0.0:8082       # health only
+      APP__SERVER__GRPC_ADDR: 0.0.0.0:50052
+      APP__SERVER__METRICS_ADDR: 0.0.0.0:9102
+      APP__DATABASE__URL: postgres://app:app@postgres:5432/ledger_db
+      APP__DATABASE__MAX_CONNECTIONS: "20"
+      HEALTH_PORT: "8082"
+    ports:
+      - "8082:8082"
+      - "50052:50052"
+      - "9102:9102"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks: [ledger-net]
+
+  # --- Notification: WebSocket fan-out (stateless, Redis presence) ------------
+  notification:
+    build:
+      <<: *app-build
+      args:
+        SERVICE: notification
+    image: ledger/notification:local
+    container_name: ledger-notification
+    environment:
+      <<: *app-common-env
+      APP__OTEL__SERVICE_NAME: notification
+      APP__SERVER__HTTP_ADDR: 0.0.0.0:8083       # WS + health
+      APP__SERVER__METRICS_ADDR: 0.0.0.0:9103
+      HEALTH_PORT: "8083"
+      # No APP__DATABASE__URL — notification is stateless (Redis only).
+    ports:
+      - "8083:8083"
+      - "9103:9103"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks: [ledger-net]
+
+  # --- Worker: saga orchestrator, projections, scheduler, DLQ -----------------
+  worker:
+    build:
+      <<: *app-build
+      args:
+        SERVICE: worker
+    image: ledger/worker:local
+    container_name: ledger-worker
+    environment:
+      <<: *app-common-env
+      APP__OTEL__SERVICE_NAME: worker
+      APP__SERVER__HTTP_ADDR: 0.0.0.0:8084       # health only
+      APP__SERVER__METRICS_ADDR: 0.0.0.0:9104
+      APP__DATABASE__URL: postgres://app:app@postgres:5432/worker_db
+      APP__DATABASE__MAX_CONNECTIONS: "20"
+      HEALTH_PORT: "8084"
+    ports:
+      - "8084:8084"
+      - "9104:9104"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks: [ledger-net]

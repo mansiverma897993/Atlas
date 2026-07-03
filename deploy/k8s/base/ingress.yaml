@@ -1,0 +1,46 @@
+# =============================================================================
+# Ingress — the ONLY external entry. Routes public paths to the two internet-
+# facing services (docs §2 trust boundary):
+#   /api      → gateway:8080       (REST/OpenAPI)
+#   /swagger  → gateway:8080       (Swagger UI)
+#   /ws       → notification:8083  (WebSocket)
+# Everything else (identity/ledger/worker gRPC) stays internal — see networkpolicy.
+# Assumes an nginx ingress controller; annotations tune WS + timeouts.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ledger-ingress
+  namespace: ledger
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # WebSocket upgrade needs long-lived connections.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["api.ledger.example.com"]
+      secretName: ledger-tls           # cert managed by cert-manager (not in repo)
+  rules:
+    - host: api.ledger.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port: { number: 8080 }
+          - path: /swagger
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port: { number: 8080 }
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: notification
+                port: { number: 8083 }

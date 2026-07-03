@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # needed to create the GitHub Release
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+
+jobs:
+  # Gate the release on a green full test suite (with live infra).
+  test:
+    name: full test suite
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: identity_db
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redpanda:
+        image: redpandadata/redpanda:v24.2.7
+        ports: ["9092:9092"]
+        options: >-
+          --health-cmd "rpk cluster health -X brokers=localhost:9092 | grep -q 'Healthy:.*true'"
+          --health-interval 15s --health-timeout 5s --health-retries 10
+    env:
+      APP__DATABASE__URL: postgres://app:app@localhost:5432/ledger_db
+      APP__REDIS__URL: redis://localhost:6379
+      APP__KAFKA__BROKERS: localhost:9092
+      DATABASE_URL: postgres://app:app@localhost:5432/ledger_db
+      SQLX_OFFLINE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Create databases
+        env:
+          PGPASSWORD: app
+        run: |
+          for db in ledger_db worker_db; do
+            psql -h localhost -U app -d postgres -tc \
+              "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1 \
+              || psql -h localhost -U app -d postgres -c "CREATE DATABASE ${db}"
+          done
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --version ^0.7 --no-default-features --features rustls,postgres --locked
+      - name: Run migrations
+        run: |
+          for db in identity_db ledger_db worker_db; do
+            if [ -d "migrations/${db}" ]; then
+              sqlx migrate run --source "migrations/${db}" \
+                --database-url "postgres://app:app@localhost:5432/${db}"
+            fi
+          done
+      - run: cargo test --workspace --all-features
+
+  build:
+    name: release binaries (${{ matrix.target }})
+    needs: [test]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --workspace --release --target ${{ matrix.target }}
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          version="${GITHUB_REF_NAME}"
+          for svc in gateway identity ledger notification worker; do
+            bin="target/${{ matrix.target }}/release/${svc}"
+            if [ -f "$bin" ]; then
+              tar -C "target/${{ matrix.target }}/release" -czf \
+                "dist/${svc}-${version}-${{ matrix.target }}.tar.gz" "${svc}"
+            fi
+          done
+          ( cd dist && sha256sum *.tar.gz > SHA256SUMS )
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+
+  release:
+    name: publish GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: false

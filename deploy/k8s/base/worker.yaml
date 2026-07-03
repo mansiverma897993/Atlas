@@ -1,0 +1,127 @@
+# =============================================================================
+# worker — saga orchestrator, projections, scheduler, DLQ handling. NOT public.
+# health 8084 · metrics 9104 · state: worker_db + Redis. Consumes Redpanda.
+# Scales on Kafka consumer lag (partition-bound parallelism, docs §8).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: ledger
+  labels: { app: worker, app.kubernetes.io/part-of: ledger-platform }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9104"
+    spec:
+      terminationGracePeriodSeconds: 30    # drain in-flight consumer batches + commit offsets
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: worker } }
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: worker } }
+      containers:
+        - name: worker
+          image: ledger/worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: health, containerPort: 8084 }
+            - { name: metrics, containerPort: 9104 }
+          envFrom:
+            - configMapRef: { name: ledger-config }
+            - secretRef: { name: ledger-secrets }
+          env:
+            - { name: APP__OTEL__SERVICE_NAME, value: worker }
+            - { name: APP__SERVER__HTTP_ADDR, value: "0.0.0.0:8084" }
+            - { name: APP__SERVER__METRICS_ADDR, value: "0.0.0.0:9104" }
+            - name: APP__DATABASE__URL
+              valueFrom:
+                secretKeyRef: { name: ledger-secrets, key: APP__DATABASE__URL__worker }
+          startupProbe:
+            httpGet: { path: /health/startup, port: health }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health/live, port: health }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: health }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits:   { cpu: "2",    memory: "1Gi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: ledger
+  labels: { app: worker }
+spec:
+  # Headless-ish clusterIP for metrics/health scraping; worker has no inbound RPC.
+  selector: { app: worker }
+  ports:
+    - { name: health, port: 8084, targetPort: health }
+    - { name: metrics, port: 9104, targetPort: metrics }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: worker
+  namespace: ledger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: worker }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: worker
+  namespace: ledger
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+  minReplicas: 2
+  # Cap at Redpanda partition count — extra consumers past that sit idle.
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+    # PRIMARY signal: Kafka consumer lag per pod. Requires prometheus-adapter/KEDA
+    # publishing `kafka_consumergroup_lag` as an external/custom metric.
+    - type: External
+      external:
+        metric:
+          name: kafka_consumergroup_lag
+          selector:
+            matchLabels: { consumergroup: worker }
+        target:
+          type: AverageValue
+          averageValue: "1000"     # scale up when avg lag/pod exceeds 1k messages

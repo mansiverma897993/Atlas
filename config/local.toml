@@ -1,0 +1,30 @@
+# Local (developer) configuration — layer 2 (overridden by APP__* env vars).
+# Selected when RUN_ENV=local (the default). Ports/service_name/db are typically set per
+# service via env; these are shared local defaults. See docs/CONVENTIONS.md.
+
+[log]
+level = "info,sqlx=warn,tower_http=info"
+format = "pretty"
+
+[otel]
+endpoint = "http://localhost:4317"
+sample_ratio = 1.0
+enabled = false        # set true (and run the collector) to export traces locally
+
+[database]
+url = "postgres://app:app@localhost:5432/postgres"
+max_connections = 10
+min_connections = 1
+
+[redis]
+url = "redis://localhost:6379"
+
+[kafka]
+brokers = "localhost:9092"
+consumer_group = "local"
+
+[jwt]
+issuer = "https://identity.local"
+audience = "ledger-platform"
+access_ttl_seconds = 900
+refresh_ttl_seconds = 2592000

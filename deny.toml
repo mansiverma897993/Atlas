@@ -1,0 +1,76 @@
+# cargo-deny configuration — https://embarkstudios.github.io/cargo-deny/
+# Run locally with `cargo deny check` (or `just audit`). Enforced in CI (`deny` job).
+
+[graph]
+# Only check the targets we actually ship / build on.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+]
+all-features = true
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# Security advisories (RustSec) — fail the build on known vulnerabilities.
+# ---------------------------------------------------------------------------
+[advisories]
+db-path = "$CARGO_HOME/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+version = 2
+yanked = "deny"
+# Add advisory IDs here (with a justification comment) only to consciously accept risk.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses — allowlist. The tree is pure-Rust with permissive licensing.
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+# SPDX identifiers we accept without review.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+confidence-threshold = 0.9
+# Per-crate license clarifications (e.g. ring's multi-license file) go here.
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+# ---------------------------------------------------------------------------
+# Bans — dependency hygiene. Duplicate versions are a warning, not a failure,
+# so the tree can converge gradually rather than blocking on transitive dupes.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+# Prefer the workspace to declare features rather than enabling them by default.
+workspace-default-features = "allow"
+external-default-features = "allow"
+# Crates we never want pulled in (native TLS / C-linked stacks — this repo is pure Rust).
+deny = [
+    { name = "openssl-sys", reason = "pure-Rust TLS only (rustls); no OpenSSL/native-tls" },
+    { name = "native-tls", reason = "use rustls" },
+]
+# Known-benign duplicate roots can be skipped explicitly here as they arise.
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# Sources — only crates.io and our own git remotes are trusted.
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
