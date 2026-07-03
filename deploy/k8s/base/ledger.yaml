@@ -1,0 +1,116 @@
+# =============================================================================
+# ledger — event-sourced ledger over gRPC + CQRS. Internal only (via gateway).
+# health 8082 · gRPC 50052 · metrics 9102 · state: ledger_db + Redis.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger
+  namespace: ledger
+  labels: { app: ledger, app.kubernetes.io/part-of: ledger-platform }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: ledger }
+  template:
+    metadata:
+      labels: { app: ledger }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9102"
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: ledger } }
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: ledger } }
+      containers:
+        - name: ledger
+          image: ledger/ledger:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: health, containerPort: 8082 }
+            - { name: grpc, containerPort: 50052 }
+            - { name: metrics, containerPort: 9102 }
+          envFrom:
+            - configMapRef: { name: ledger-config }
+            - secretRef: { name: ledger-secrets }
+          env:
+            - { name: APP__OTEL__SERVICE_NAME, value: ledger }
+            - { name: APP__SERVER__HTTP_ADDR, value: "0.0.0.0:8082" }
+            - { name: APP__SERVER__GRPC_ADDR, value: "0.0.0.0:50052" }
+            - { name: APP__SERVER__METRICS_ADDR, value: "0.0.0.0:9102" }
+            - name: APP__DATABASE__URL
+              valueFrom:
+                secretKeyRef: { name: ledger-secrets, key: APP__DATABASE__URL__ledger }
+          startupProbe:
+            httpGet: { path: /health/startup, port: health }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health/live, port: health }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: health }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits:   { cpu: "2",    memory: "1Gi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger
+  namespace: ledger
+  labels: { app: ledger }
+spec:
+  selector: { app: ledger }
+  ports:
+    - { name: grpc, port: 50052, targetPort: grpc }
+    - { name: health, port: 8082, targetPort: health }
+    - { name: metrics, port: 9102, targetPort: metrics }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ledger
+  namespace: ledger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: ledger }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ledger
+  namespace: ledger
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ledger
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }

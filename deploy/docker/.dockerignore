@@ -1,0 +1,34 @@
+# Keep the build context small and the dependency cache stable.
+# Anything here is NOT sent to the Docker daemon / build.
+
+# Rust build artifacts (huge; rebuilt inside the image)
+/target
+**/target
+
+# Git & CI metadata
+.git
+.github
+.gitignore
+
+# Local editor / OS cruft
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Docs & deploy artifacts are not needed to compile the binaries
+# (config/ IS needed and is intentionally NOT ignored).
+/docs
+/deploy
+/tests
+
+# Env files & secrets — never bake into an image
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# Local data / logs
+*.log
+/data

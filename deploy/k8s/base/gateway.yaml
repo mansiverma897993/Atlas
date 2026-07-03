@@ -1,0 +1,124 @@
+# =============================================================================
+# gateway — public REST/OpenAPI edge. The ONLY internet-facing service.
+# HTTP 8080 · metrics 9100 · stateless (Redis for rate-limit).
+# Bundles: Deployment + Service + PodDisruptionBudget + HorizontalPodAutoscaler.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: ledger
+  labels: { app: gateway, app.kubernetes.io/part-of: ledger-platform }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels: { app: gateway }
+      annotations:
+        # Prometheus pod-scrape hints (if using kubernetes_sd_configs).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      terminationGracePeriodSeconds: 30   # matches SIGTERM graceful drain (docs §6.5)
+      # Pod-level non-root security posture (satisfies restricted PSS).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      # Spread replicas across zones/nodes for HA.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: gateway }
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: gateway }
+      containers:
+        - name: gateway
+          image: ledger/gateway:latest   # overlay/CI pins to a git-SHA tag
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: metrics, containerPort: 9100 }
+          # Non-secret config from ConfigMap; secrets from Secret.
+          envFrom:
+            - configMapRef: { name: ledger-config }
+            - secretRef: { name: ledger-secrets }
+          env:
+            - { name: APP__OTEL__SERVICE_NAME, value: gateway }
+            - { name: APP__SERVER__HTTP_ADDR, value: "0.0.0.0:8080" }
+            - { name: APP__SERVER__METRICS_ADDR, value: "0.0.0.0:9100" }
+          # Probes wired to the health endpoints (docs §6.5).
+          startupProbe:                    # guards slow first boot; others wait for this
+            httpGet: { path: /health/startup, port: http }
+            periodSeconds: 5
+            failureThreshold: 30           # up to ~150s to become ready
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "1",    memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: ledger
+  labels: { app: gateway }
+spec:
+  selector: { app: gateway }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+    - { name: metrics, port: 9100, targetPort: metrics }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway
+  namespace: ledger
+spec:
+  minAvailable: 1                          # keep ≥1 pod during voluntary disruptions
+  selector:
+    matchLabels: { app: gateway }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway
+  namespace: ledger
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+    # Custom metric placeholder: scale on requests-per-second per pod.
+    # Requires prometheus-adapter (or KEDA) exposing this metric.
+    - type: Pods
+      pods:
+        metric: { name: http_requests_per_second }
+        target: { type: AverageValue, averageValue: "200" }

@@ -1,0 +1,17 @@
+# =============================================================================
+# Grafana dashboard provider — auto-loads JSON dashboards from disk on startup.
+# JSON files live in /var/lib/grafana/dashboards (mounted in docker-compose).
+# =============================================================================
+apiVersion: 1
+
+providers:
+  - name: ledger-dashboards
+    orgId: 1
+    folder: Ledger Platform
+    type: file
+    disableDeletion: false
+    editable: true
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

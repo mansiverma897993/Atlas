@@ -1,0 +1,116 @@
+# =============================================================================
+# notification — WebSocket fan-out (consumes events). Reachable from ingress
+# for WSS (/ws). Stateless (Redis presence). ws+health 8083 · metrics 9103.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+  namespace: ledger
+  labels: { app: notification, app.kubernetes.io/part-of: ledger-platform }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: notification }
+  template:
+    metadata:
+      labels: { app: notification }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9103"
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: notification } }
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: notification } }
+      containers:
+        - name: notification
+          image: ledger/notification:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8083 }   # WS + health share this port
+            - { name: metrics, containerPort: 9103 }
+          envFrom:
+            - configMapRef: { name: ledger-config }
+            - secretRef: { name: ledger-secrets }
+          env:
+            - { name: APP__OTEL__SERVICE_NAME, value: notification }
+            - { name: APP__SERVER__HTTP_ADDR, value: "0.0.0.0:8083" }
+            - { name: APP__SERVER__METRICS_ADDR, value: "0.0.0.0:9103" }
+            # No APP__DATABASE__URL — notification is stateless (Redis only).
+          startupProbe:
+            httpGet: { path: /health/startup, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "1",    memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification
+  namespace: ledger
+  labels: { app: notification }
+spec:
+  selector: { app: notification }
+  ports:
+    - { name: http, port: 8083, targetPort: http }
+    - { name: metrics, port: 9103, targetPort: metrics }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notification
+  namespace: ledger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: notification }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notification
+  namespace: ledger
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: notification
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+    # Scale on active WebSocket connections per pod (custom metric placeholder).
+    - type: Pods
+      pods:
+        metric: { name: websocket_active_connections }
+        target: { type: AverageValue, averageValue: "5000" }

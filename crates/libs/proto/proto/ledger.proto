@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+// The Ledger context's internal gRPC surface. Commands mutate the event-sourced write model;
+// queries read from projections. Money is always (minor_units, currency) — never a float.
+package ledger.v1;
+
+service LedgerService {
+  // ---- commands (write side) ----
+  rpc OpenAccount(OpenAccountRequest) returns (OpenAccountResponse);
+  rpc InitiateTransfer(InitiateTransferRequest) returns (InitiateTransferResponse);
+  rpc FreezeAccount(FreezeAccountRequest) returns (CommandAck);
+
+  // ---- queries (read side / projections) ----
+  rpc GetAccount(GetAccountRequest) returns (AccountView);
+  rpc GetBalance(GetBalanceRequest) returns (BalanceView);
+  rpc GetTransfer(GetTransferRequest) returns (TransferView);
+  rpc ListTransactions(ListTransactionsRequest) returns (TransactionPage);
+}
+
+// Money as integer minor units + ISO-4217 code (ADR-0010). e.g. {12345, "USD"} = $123.45.
+message Money {
+  int64 minor_units = 1;
+  string currency = 2;
+}
+
+message OpenAccountRequest {
+  string owner_id = 1;
+  string currency = 2;
+}
+message OpenAccountResponse {
+  string account_id = 1;
+}
+
+message InitiateTransferRequest {
+  // Client-supplied idempotency key; the same key returns the same transfer.
+  string idempotency_key = 1;
+  string source_account_id = 2;
+  string destination_account_id = 3;
+  Money amount = 4;
+}
+message InitiateTransferResponse {
+  string transfer_id = 1;
+  string status = 2;        // "REQUESTED"
+}
+
+message FreezeAccountRequest {
+  string account_id = 1;
+  string reason = 2;
+}
+message CommandAck {
+  bool accepted = 1;
+}
+
+message GetAccountRequest { string account_id = 1; }
+message AccountView {
+  string account_id = 1;
+  string owner_id = 2;
+  string currency = 3;
+  string status = 4;        // OPEN | FROZEN | CLOSED
+  Money posted_balance = 5;
+  Money reserved = 6;
+  Money available = 7;
+  uint64 version = 8;
+}
+
+message GetBalanceRequest { string account_id = 1; }
+message BalanceView {
+  string account_id = 1;
+  Money posted = 2;
+  Money reserved = 3;
+  Money available = 4;
+}
+
+message GetTransferRequest { string transfer_id = 1; }
+message TransferView {
+  string transfer_id = 1;
+  string source_account_id = 2;
+  string destination_account_id = 3;
+  Money amount = 4;
+  string status = 5;        // REQUESTED|RESERVING|CREDITING|CAPTURING|COMPLETED|FAILED
+  string failure_reason = 6;
+  int64 created_at = 7;
+  int64 updated_at = 8;
+}
+
+message ListTransactionsRequest {
+  string account_id = 1;
+  uint32 limit = 2;
+  string cursor = 3;        // opaque pagination cursor
+}
+message TransactionPage {
+  repeated TransactionEntry entries = 1;
+  string next_cursor = 2;
+}
+message TransactionEntry {
+  string transfer_id = 1;
+  string direction = 2;     // DEBIT | CREDIT
+  Money amount = 3;
+  int64 occurred_at = 4;
+}

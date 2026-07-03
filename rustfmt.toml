@@ -1,0 +1,14 @@
+# Formatting is enforced in CI via `cargo fmt --all -- --check`.
+edition = "2021"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+
+# Import hygiene: one item per `use`, grouped and ordered deterministically.
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+reorder_modules = true

@@ -1,0 +1,44 @@
+[package]
+name = "notification"
+description = "Realtime notification service: WebSocket hub, presence, event fan-out."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "notification"
+path = "src/main.rs"
+
+[dependencies]
+kernel = { workspace = true }
+config = { workspace = true }
+telemetry = { workspace = true, features = ["otel"] }
+infra = { workspace = true }
+resilience = { workspace = true }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+jsonwebtoken = { workspace = true }
+redis = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

@@ -1,0 +1,79 @@
+# =============================================================================
+# OpenTelemetry Collector — the single ingestion point for all service telemetry.
+#
+# Services push OTLP/gRPC to otel-collector:4317 (APP__OTEL__ENDPOINT).
+# The collector then:
+#   * exports TRACES  → Jaeger (OTLP)
+#   * exposes METRICS → a Prometheus scrape endpoint on :8889
+# See docs/ARCHITECTURE.md §6.2.
+# =============================================================================
+
+receivers:
+  # Accept OTLP over both gRPC (primary) and HTTP.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Batch spans/metrics to reduce export overhead and network chatter.
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Guardrail against memory blowups under load — start dropping before OOM.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # Attach collector-host resource attributes (helps distinguish sources).
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 2s
+    override: false
+
+exporters:
+  # --- Traces → Jaeger via OTLP (Jaeger has COLLECTOR_OTLP_ENABLED=true) ------
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true                 # in-cluster plaintext; TLS terminates elsewhere
+
+  # --- Metrics → Prometheus scrape endpoint exposed by the collector ---------
+  # Prometheus scrapes otel-collector:8889 (see prometheus.yml job otel-collector).
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Keep resource attributes as metric labels for correlation with traces.
+    resource_to_telemetry_conversion:
+      enabled: true
+    enable_open_metrics: true
+
+  # Handy while debugging pipelines; low verbosity by default.
+  debug:
+    verbosity: basic
+
+extensions:
+  # Liveness endpoint for the collector container (:13133).
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  # Expose the collector's OWN internal telemetry for Prometheus (job otel-collector-self).
+  telemetry:
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [prometheus]

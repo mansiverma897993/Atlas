@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+// The Identity & Access context's internal gRPC surface. The gateway maps REST/JSON to
+// these RPCs; other services call ValidateToken/Authorize for defense-in-depth checks.
+package identity.v1;
+
+service AuthService {
+  // Create a new user + credentials; emits UserRegistered on the event bus.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Exchange credentials for an access + refresh token pair.
+  rpc Login(LoginRequest) returns (TokenPair);
+  // Rotate a refresh token; reuse of a rotated token revokes the whole family.
+  rpc RefreshToken(RefreshRequest) returns (TokenPair);
+  // Revoke a refresh-token family (logout / compromise).
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  // Verify an access token and return its claims (used by services, not the hot path).
+  rpc ValidateToken(ValidateRequest) returns (Claims);
+  // RBAC check: does the subject hold the required permission?
+  rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+  string display_name = 3;
+}
+message RegisterResponse {
+  string user_id = 1;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+message LogoutResponse {
+  bool revoked = 1;
+}
+
+message TokenPair {
+  string access_token = 1;   // JWT (RS256), short-lived
+  string refresh_token = 2;  // opaque, rotating
+  int64 expires_in = 3;      // access-token TTL seconds
+  string token_type = 4;     // "Bearer"
+}
+
+message ValidateRequest {
+  string access_token = 1;
+}
+
+message Claims {
+  string subject = 1;        // user id
+  repeated string roles = 2;
+  repeated string permissions = 3;
+  int64 expires_at = 4;      // unix seconds
+  string issuer = 5;
+}
+
+message AuthorizeRequest {
+  string subject = 1;
+  string permission = 2;     // e.g. "ledger:transfer:create"
+}
+message AuthorizeResponse {
+  bool allowed = 1;
+}

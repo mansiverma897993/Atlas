@@ -1,0 +1,33 @@
+# =============================================================================
+# Grafana datasource provisioning — loaded automatically on startup.
+# Wires Prometheus (metrics) and Jaeger (traces), with trace↔metric correlation.
+# =============================================================================
+apiVersion: 1
+
+datasources:
+  # --- Prometheus (default) ---------------------------------------------------
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      # Let Grafana jump from a Prometheus exemplar to the matching Jaeger trace.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: jaeger
+
+  # --- Jaeger (traces) --------------------------------------------------------
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      # Trace → logs/metrics correlation back into Prometheus.
+      tracesToMetrics:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

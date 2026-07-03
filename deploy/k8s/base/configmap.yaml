@@ -1,0 +1,37 @@
+# =============================================================================
+# Non-secret configuration shared by all services (docs/CONVENTIONS.md).
+# Secrets (DB passwords, JWT keys) live in secret.example.yaml, NOT here.
+# Config is injected as env vars with the APP__ prefix / __ nesting.
+#
+# Hostnames (postgres/redis/redpanda) point at in-cluster Services. To use
+# MANAGED data services in prod, override these in the production overlay
+# (see deploy/k8s/base/README.md).
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledger-config
+  namespace: ledger
+data:
+  RUN_ENV: "production"
+
+  # --- Shared infra endpoints (non-secret host/port; credentials come from Secret)
+  APP__REDIS__URL: "redis://redis:6379"
+  APP__KAFKA__BROKERS: "redpanda:9092"
+  APP__OTEL__ENDPOINT: "http://otel-collector:4317"
+
+  # --- Logging ----------------------------------------------------------------
+  APP__LOG__LEVEL: "info"
+  APP__LOG__FORMAT: "json"
+
+  # --- JWT (issuer + TTLs are non-secret; signing keys are in the Secret) ------
+  APP__JWT__ISSUER: "https://identity.local"
+  APP__JWT__ACCESS_TTL_SECONDS: "900"
+  APP__JWT__REFRESH_TTL_SECONDS: "2592000"
+
+  # --- DB pool sizing (non-secret) --------------------------------------------
+  APP__DATABASE__MAX_CONNECTIONS: "20"
+
+  # --- Internal gRPC upstreams the gateway routes to --------------------------
+  APP__UPSTREAMS__IDENTITY: "http://identity:50051"
+  APP__UPSTREAMS__LEDGER: "http://ledger:50052"

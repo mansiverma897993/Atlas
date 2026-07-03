@@ -1,0 +1,40 @@
+[package]
+name = "app-telemetry"
+description = "Observability bootstrap: structured logging, tracing, metrics, OTLP export."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "telemetry"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+# OTLP export is opt-in so the base build doesn't depend on the (version-sensitive)
+# OpenTelemetry stack. Enable in service builds that ship traces to the collector.
+default = []
+otel = [
+    "dep:tracing-opentelemetry",
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+]
+
+[dependencies]
+config = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+thiserror = { workspace = true }
+
+tracing-opentelemetry = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-semantic-conventions = { workspace = true, optional = true }

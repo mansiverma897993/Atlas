@@ -1,0 +1,24 @@
+[package]
+name = "app-proto"
+description = "Generated gRPC contracts (tonic/prost) — the internal service API surface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "proto"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.11"
+# Vendors a protoc binary so the build needs no system-installed protobuf compiler.
+protoc-bin-vendored = "3"

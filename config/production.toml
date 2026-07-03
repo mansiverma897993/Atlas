@@ -1,0 +1,25 @@
+# Production configuration — layer 2 (overridden by APP__* env vars / secrets).
+# Selected when RUN_ENV=production. Secrets (DB URL, JWT keys) MUST come from the environment
+# / secret manager, never this file. See docs/CONVENTIONS.md and ADR-0009.
+
+[log]
+level = "info"
+format = "json"
+
+[otel]
+sample_ratio = 0.1          # sample 10% of traces under production load
+enabled = true
+
+[database]
+max_connections = 20
+min_connections = 5
+acquire_timeout_seconds = 10
+
+[kafka]
+max_delivery_attempts = 5
+
+[jwt]
+issuer = "https://identity.ledger-platform.example"
+audience = "ledger-platform"
+access_ttl_seconds = 900
+refresh_ttl_seconds = 2592000

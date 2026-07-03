@@ -1,0 +1,66 @@
+# =============================================================================
+# Prometheus scrape configuration for the Ledger Platform.
+#
+# Scrapes every service's /metrics (ports 9100-9104 per docs/CONVENTIONS.md),
+# the OTel Collector (self-telemetry + OTLP-forwarded app metrics), Redpanda,
+# and Prometheus itself. Hostnames are the docker-compose service names; in
+# k8s these are replaced by kubernetes_sd_configs (see deploy/k8s).
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: local
+    platform: ledger
+
+scrape_configs:
+  # --- Prometheus self-monitoring --------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # --- Application services (RED + domain metrics) ---------------------------
+  # Each entry maps to a service's metrics port. `service` label lets dashboards
+  # filter per service; the path is the default /metrics.
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:9100"]
+        labels: { service: gateway }
+
+  - job_name: identity
+    static_configs:
+      - targets: ["identity:9101"]
+        labels: { service: identity }
+
+  - job_name: ledger
+    static_configs:
+      - targets: ["ledger:9102"]
+        labels: { service: ledger }
+
+  - job_name: notification
+    static_configs:
+      - targets: ["notification:9103"]
+        labels: { service: notification }
+
+  - job_name: worker
+    static_configs:
+      - targets: ["worker:9104"]
+        labels: { service: worker }
+
+  # --- OTel Collector: metrics forwarded from OTLP (app metrics via collector)
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # --- OTel Collector: the collector's OWN internal telemetry ----------------
+  - job_name: otel-collector-self
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  # --- Redpanda broker metrics (Kafka backbone health, consumer lag source) --
+  # Redpanda exposes Prometheus metrics on the admin port 9644.
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]

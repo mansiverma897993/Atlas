@@ -1,0 +1,63 @@
+# =============================================================================
+# Migration Job — applies SQL migrations to all three databases BEFORE the app
+# services roll out. Migrations NEVER run at app boot (docs/CONVENTIONS.md
+# §Databases, docs §8).
+#
+# Flow: `kubectl apply -k ...` creates this Job; gate your rollout on its
+# completion (e.g. `kubectl wait --for=condition=complete job/ledger-migrate`)
+# or run it as an Argo/Helm pre-sync hook. The readiness probe additionally
+# checks "migrations applied", so services won't take traffic prematurely.
+#
+# The image bundles the compiled migrator (or sqlx-cli) + the migrations/ dir.
+# Here we reuse the ledger image and invoke a migrate subcommand; swap for your
+# actual migration entrypoint.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ledger-migrate
+  namespace: ledger
+  labels: { app: ledger-migrate, app.kubernetes.io/part-of: ledger-platform }
+  annotations:
+    # If using Argo CD, run before the main sync wave:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3                        # retry a few times on transient DB errors
+  ttlSecondsAfterFinished: 600           # auto-clean finished Job after 10 min
+  template:
+    metadata:
+      labels: { app: ledger-migrate }
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          # Image ships sqlx-cli + the migrations/ tree; pinned to the release SHA.
+          image: ledger/migrate:latest
+          imagePullPolicy: IfNotPresent
+          # Apply each context's migrations in turn. DB URLs come from the Secret.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "Applying identity_db migrations..."
+              sqlx migrate run --source /migrations/identity --database-url "$APP__DATABASE__URL__identity"
+              echo "Applying ledger_db migrations..."
+              sqlx migrate run --source /migrations/ledger   --database-url "$APP__DATABASE__URL__ledger"
+              echo "Applying worker_db migrations..."
+              sqlx migrate run --source /migrations/worker   --database-url "$APP__DATABASE__URL__worker"
+              echo "Migrations complete."
+          envFrom:
+            - secretRef: { name: ledger-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "500m", memory: "256Mi" }

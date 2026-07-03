@@ -1,0 +1,77 @@
+# =============================================================================
+# NetworkPolicies — enforce the trust boundary (docs §2, §8):
+#   * Only gateway + notification are reachable FROM the ingress controller.
+#   * Internal services (identity, ledger, worker) accept traffic ONLY from
+#     inside the namespace (peer pods), never from ingress or other namespaces.
+#   * Everything may still reach infra (postgres/redis/redpanda) + DNS + OTel.
+# Requires a CNI that enforces NetworkPolicy (Calico, Cilium, etc.).
+# =============================================================================
+
+# --- 1. Default-deny all ingress in the namespace ---------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: ledger
+spec:
+  podSelector: {}                       # applies to every pod
+  policyTypes: [Ingress]
+  # No `ingress:` rules → all inbound denied unless another policy allows it.
+---
+# --- 2. Allow ingress-controller → gateway + notification (public surface) ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-public
+  namespace: ledger
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: [gateway, notification] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Adjust to your ingress controller's namespace label.
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8083 }
+---
+# --- 3. Allow intra-namespace traffic to internal services -------------------
+# gateway→identity/ledger gRPC, services→each other, Prometheus scraping, etc.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-namespace-internal
+  namespace: ledger
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Any pod in THIS namespace may talk to any other pod here.
+        - podSelector: {}
+      # (ports omitted = all ports) — scoped to same-namespace peers only.
+---
+# --- 4. Egress: allow DNS + intra-namespace; deny cross-namespace by default --
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-dns-and-internal
+  namespace: ledger
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # DNS resolution.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Same-namespace peers (services + in-cluster postgres/redis/redpanda/otel).
+    - to:
+        - podSelector: {}
+    # NOTE: for MANAGED external data services, add an explicit egress rule to
+    # their CIDR/port here (see deploy/k8s/base/README.md).

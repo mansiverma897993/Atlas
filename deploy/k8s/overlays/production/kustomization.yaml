@@ -1,0 +1,68 @@
+# =============================================================================
+# Production overlay — bumps replicas/resources and pins images to a release
+# SHA. Point data hostnames at MANAGED services here (see base/README.md).
+#   kubectl apply -k deploy/k8s/overlays/production
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ledger
+
+resources:
+  - ../../base
+
+# Pin every image to an immutable release tag (CI substitutes the git SHA).
+images:
+  - { name: ledger/gateway,      newTag: v1.0.0 }
+  - { name: ledger/identity,     newTag: v1.0.0 }
+  - { name: ledger/ledger,       newTag: v1.0.0 }
+  - { name: ledger/notification, newTag: v1.0.0 }
+  - { name: ledger/worker,       newTag: v1.0.0 }
+  - { name: ledger/migrate,      newTag: v1.0.0 }
+
+# Point at managed data services in prod: override the ConfigMap non-secret hosts.
+# (Secret DB URLs are managed separately via SOPS/sealed-secrets.)
+configMapGenerator:
+  - name: ledger-config
+    behavior: merge
+    literals:
+      - APP__REDIS__URL=redis://prod-redis.internal:6379
+      - APP__KAFKA__BROKERS=prod-redpanda.internal:9092
+
+# --- Higher replica counts for prod HA --------------------------------------
+replicas:
+  - { name: gateway,      count: 3 }
+  - { name: identity,     count: 3 }
+  - { name: ledger,       count: 3 }
+  - { name: notification, count: 3 }
+  - { name: worker,       count: 4 }
+
+# --- Production resource requests/limits (strategic-merge patches) -----------
+patches:
+  - target: { kind: Deployment, name: gateway }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: "500m", memory: "256Mi" }
+          limits:   { cpu: "2",    memory: "1Gi" }
+  - target: { kind: Deployment, name: ledger }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: "1",   memory: "512Mi" }
+          limits:   { cpu: "4",   memory: "2Gi" }
+  - target: { kind: Deployment, name: worker }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: "1",   memory: "512Mi" }
+          limits:   { cpu: "4",   memory: "2Gi" }
+  # Raise PDB floor now that we run ≥3 replicas.
+  - target: { kind: PodDisruptionBudget }
+    patch: |
+      - op: replace
+        path: /spec/minAvailable
+        value: 2
