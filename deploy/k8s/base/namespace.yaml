@@ -1,0 +1,13 @@
+# Dedicated namespace for the whole platform. NetworkPolicies below scope
+# "internal" traffic to this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ledger
+  labels:
+    app.kubernetes.io/part-of: ledger-platform
+    # Enable the restricted Pod Security Standard: enforces non-root, no privilege
+    # escalation, dropped capabilities — matches our securityContext below.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

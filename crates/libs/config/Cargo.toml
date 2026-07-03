@@ -1,0 +1,22 @@
+[package]
+name = "app-config"
+description = "Layered, strongly-typed, fail-fast configuration (defaults -> file -> env)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "config"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+figment = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+figment = { workspace = true, features = ["test"] }

@@ -1,0 +1,6 @@
+# Pin the toolchain so every developer and CI runner builds with the same compiler.
+# Bump deliberately (and in lockstep with `rust-version` in the workspace Cargo.toml).
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

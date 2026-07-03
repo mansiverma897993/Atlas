@@ -1,0 +1,39 @@
+# =============================================================================
+# Base kustomization — the full set of platform resources. Overlays patch this.
+#   kubectl apply -k deploy/k8s/base                 # apply base as-is
+#   kubectl apply -k deploy/k8s/overlays/production  # apply prod overlay
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ledger
+
+# Common labels stamped onto every resource for selection/observability.
+commonLabels:
+  app.kubernetes.io/part-of: ledger-platform
+
+resources:
+  # Namespace + shared config
+  - namespace.yaml
+  - configmap.yaml
+  - secret.example.yaml          # replace with a real secret manager in prod
+  # Migration gate (runs before services)
+  - migrate-job.yaml
+  # Services (each file = Deployment + Service + PDB + HPA)
+  - gateway.yaml
+  - identity.yaml
+  - ledger.yaml
+  - notification.yaml
+  - worker.yaml
+  # Networking
+  - ingress.yaml
+  - networkpolicy.yaml
+
+# Default image tags (overlays/CI override with pinned git-SHA tags).
+images:
+  - { name: ledger/gateway,      newTag: latest }
+  - { name: ledger/identity,     newTag: latest }
+  - { name: ledger/ledger,       newTag: latest }
+  - { name: ledger/notification, newTag: latest }
+  - { name: ledger/worker,       newTag: latest }
+  - { name: ledger/migrate,      newTag: latest }

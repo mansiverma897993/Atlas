@@ -1,0 +1,159 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/libs/kernel",
+    "crates/libs/config",
+    "crates/libs/resilience",
+    "crates/libs/proto",
+    "crates/libs/telemetry",
+    "crates/libs/infra",
+    "crates/ledger",
+    "crates/identity",
+    "crates/gateway",
+    "crates/notification",
+    "crates/worker",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+license = "MIT"
+authors = ["Ledger Platform"]
+repository = "https://github.com/example/rustbackend"
+
+# Centralized dependency versions — every crate pulls from here so the workspace
+# stays on one coherent set. Pure-Rust deps only (rustls, rskafka) so the tree
+# builds with just the Rust toolchain (no C compiler / librdkafka / native TLS).
+[workspace.dependencies]
+# ---- async runtime & primitives ----
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# ---- web / edge ----
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["trace", "cors", "request-id", "timeout", "limit"] }
+hyper = { version = "1", features = ["full"] }
+http = "1"
+
+# ---- gRPC ----
+tonic = { version = "0.11", features = ["tls"] }
+prost = "0.12"
+prost-types = "0.12"
+
+# ---- data stores ----
+sqlx = { version = "0.7", default-features = false, features = [
+    "runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros",
+] }
+redis = { version = "0.25", default-features = false, features = [
+    "tokio-comp", "connection-manager", "script",
+] }
+rskafka = "0.5"
+
+# ---- serialization / validation ----
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+validator = { version = "0.18", features = ["derive"] }
+
+# ---- identity / crypto ----
+argon2 = "0.5"
+jsonwebtoken = "9"
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+
+# ---- domain primitives ----
+uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1", features = ["serde"] }
+
+# ---- config ----
+figment = { version = "0.10", features = ["toml", "env"] }
+
+# ---- observability ----
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.25"
+opentelemetry = "0.24"
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.16"
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
+
+# ---- resilience ----
+backon = "0.4"
+governor = "0.6"
+
+# ---- scheduler ----
+tokio-cron-scheduler = "0.10"
+
+# ---- openapi ----
+utoipa = { version = "4", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "7", features = ["axum"] }
+
+# ---- errors ----
+thiserror = "1"
+anyhow = "1"
+
+# ---- internal crates ----
+kernel = { path = "crates/libs/kernel" }
+config = { path = "crates/libs/config", package = "app-config" }
+telemetry = { path = "crates/libs/telemetry", package = "app-telemetry" }
+infra = { path = "crates/libs/infra", package = "app-infra" }
+resilience = { path = "crates/libs/resilience", package = "app-resilience" }
+proto = { path = "crates/libs/proto", package = "app-proto" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Pedantic lints kept as warnings; the domain crates aim to be clean under them.
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+# Numeric-boundary casts are deliberate and provably safe here: money is `i128` minor units
+# but persists to Postgres `BIGINT` (`i64`) and crosses protobuf `int64`; amounts fit by
+# construction. Kept explicit at call sites rather than lint-noise across the tree.
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+cast_precision_loss = "allow"
+# Cosmetic / low-signal for this codebase.
+doc_markdown = "allow"
+missing_panics_doc = "allow"
+result_large_err = "allow"
+# `Id::new()` mints a fresh random id — a `Default` would wrongly imply a canonical value.
+new_without_default = "allow"
+# `Money::add/sub` are intentional *checked* methods returning `Result`, not the infallible
+# `std::ops` traits.
+should_implement_trait = "allow"
+# Low-signal style/pedantic lints disabled workspace-wide (widely disabled in practice); the
+# `pedantic` group otherwise stays on to catch the higher-signal issues.
+similar_names = "allow"
+needless_pass_by_value = "allow"
+unused_self = "allow"
+match_same_arms = "allow"
+unnecessary_wraps = "allow"
+format_collect = "allow"
+needless_for_each = "allow"
+double_must_use = "allow"
+# Composition roots (`main`) and REST handlers are legitimately long, top-to-bottom wiring.
+too_many_lines = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0

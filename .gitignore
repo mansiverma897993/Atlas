@@ -1,0 +1,63 @@
+# ---- Rust / Cargo ----
+/target
+**/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is committed for binaries/workspaces with service crates — keep it.
+# (Do not ignore Cargo.lock.)
+
+# ---- sqlx offline query cache ----
+# The `.sqlx/` directory is the committed offline query metadata (`cargo sqlx prepare`).
+# Keep it tracked so CI can build with SQLX_OFFLINE=true.
+!.sqlx/
+
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+
+# ---- Coverage / profiling artifacts ----
+*.profraw
+*.profdata
+/coverage/
+lcov.info
+cobertura.xml
+tarpaulin-report.*
+flamegraph.svg
+perf.data*
+
+# ---- Load / bench output ----
+/loadtest/report*.html
+criterion/
+target/criterion/
+
+# ---- OS junk ----
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*~
+
+# ---- IDE / editor ----
+/.idea/
+/.vscode/
+!/.vscode/extensions.json
+*.iml
+*.swp
+*.swo
+.direnv/
+.fleet/
+*.code-workspace
+
+# ---- Misc local tooling ----
+/tmp/
+/.cache/
+node_modules/
