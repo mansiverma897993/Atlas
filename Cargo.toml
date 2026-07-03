@@ -61,7 +61,7 @@ validator = { version = "0.18", features = ["derive"] }
 
 # ---- identity / crypto ----
 argon2 = "0.5"
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
