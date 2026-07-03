@@ -63,7 +63,7 @@ validator = { version = "0.18", features = ["derive"] }
 argon2 = "0.5"
 jsonwebtoken = "9"
 rand = "0.8"
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
 
 # ---- domain primitives ----
