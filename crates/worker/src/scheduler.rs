@@ -22,7 +22,7 @@ pub trait ScheduledJob: Send + Sync {
 
     /// Cron expression in `tokio-cron-scheduler` form: `sec min hour dom mon dow` (7th `year`
     /// field optional). E.g. `"0 0 0 * * *"` = daily at midnight UTC.
-    fn schedule(&self) -> &str;
+    fn schedule(&self) -> &'static str;
 
     /// The work to perform on each firing. Must be self-contained and idempotent.
     async fn run(&self);
@@ -83,14 +83,14 @@ impl Scheduler {
 /// metric/log so the schedule is observable.
 pub struct ReservationExpirySweep {
     /// Cron schedule (default: every 30 seconds).
-    pub schedule: String,
+    pub schedule: &'static str,
 }
 
 impl Default for ReservationExpirySweep {
     fn default() -> Self {
         // Every 30 seconds: seconds field `0/30`.
         Self {
-            schedule: "0/30 * * * * *".to_string(),
+            schedule: "0/30 * * * * *",
         }
     }
 }
@@ -100,8 +100,8 @@ impl ScheduledJob for ReservationExpirySweep {
     fn name(&self) -> &'static str {
         "reservation_expiry_sweep"
     }
-    fn schedule(&self) -> &str {
-        &self.schedule
+    fn schedule(&self) -> &'static str {
+        self.schedule
     }
     async fn run(&self) {
         // Placeholder for the ledger gRPC sweep call; emit a domain metric for now.
@@ -113,13 +113,13 @@ impl ScheduledJob for ReservationExpirySweep {
 /// Generates account statements once per day. Emits a metric/log for the demo.
 pub struct DailyStatementGeneration {
     /// Cron schedule (default: daily at 00:00 UTC).
-    pub schedule: String,
+    pub schedule: &'static str,
 }
 
 impl Default for DailyStatementGeneration {
     fn default() -> Self {
         Self {
-            schedule: "0 0 0 * * *".to_string(),
+            schedule: "0 0 0 * * *",
         }
     }
 }
@@ -129,8 +129,8 @@ impl ScheduledJob for DailyStatementGeneration {
     fn name(&self) -> &'static str {
         "daily_statement_generation"
     }
-    fn schedule(&self) -> &str {
-        &self.schedule
+    fn schedule(&self) -> &'static str {
+        self.schedule
     }
     async fn run(&self) {
         metrics::counter!("statements_generated_total").increment(1);
@@ -151,7 +151,7 @@ mod tests {
         fn name(&self) -> &'static str {
             "probe"
         }
-        fn schedule(&self) -> &str {
+        fn schedule(&self) -> &'static str {
             // Every second, so the test observes a tick quickly.
             "* * * * * *"
         }
