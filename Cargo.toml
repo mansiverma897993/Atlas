@@ -46,8 +46,8 @@ prost = "0.12"
 prost-types = "0.12"
 
 # ---- data stores ----
-sqlx = { version = "0.7", default-features = false, features = [
-    "runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros",
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros",
 ] }
 redis = { version = "0.25", default-features = false, features = [
     "tokio-comp", "connection-manager", "script",
@@ -83,7 +83,10 @@ opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.16"
 metrics = "0.23"
-metrics-exporter-prometheus = "0.15"
+# `default-features = false` drops the built-in hyper/rustls HTTP listener and push-gateway
+# (which pulled an old `rustls-webpki`/`rustls-pemfile`); we expose `/metrics` through our own
+# axum server via `install_recorder()` + `render()`, so the core recorder is all we need.
+metrics-exporter-prometheus = { version = "0.15", default-features = false }
 
 # ---- resilience ----
 backon = "0.4"

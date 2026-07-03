@@ -65,7 +65,7 @@ mod tests {
     fn delay_grows_and_is_capped() {
         let b = ExponentialBackoff {
             base: Duration::from_millis(100),
-            cap: Duration::from_millis(1000),
+            cap: Duration::from_secs(1),
             multiplier: 2.0,
             jitter: false,
             max_retries: 10,
@@ -74,7 +74,7 @@ mod tests {
         assert_eq!(b.raw_delay(1), Duration::from_millis(200));
         assert_eq!(b.raw_delay(2), Duration::from_millis(400));
         // capped
-        assert_eq!(b.raw_delay(20), Duration::from_millis(1000));
+        assert_eq!(b.raw_delay(20), Duration::from_secs(1));
     }
 
     #[test]

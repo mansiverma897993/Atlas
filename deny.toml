@@ -20,8 +20,32 @@ db-path = "$CARGO_HOME/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 version = 2
 yanked = "deny"
-# Add advisory IDs here (with a justification comment) only to consciously accept risk.
-ignore = []
+# Consciously-accepted advisories. Each is transitive and/or build-time-only, with no
+# runtime attack surface in these services, and either has no fixed release or no fix that a
+# leaf crate can pull. Reviewed and accepted rather than silently suppressed.
+ignore = [
+    # `rsa` has no released fix. Used only server-side by `identity` to mint the RS256 JWT
+    # signing key; an attacker cannot observe its private-key timing side channel remotely
+    # (the advisory itself notes local, non-adversarial use is safe).
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack: no upstream fix; server-side JWT signing only, not exposed to local timing observation" },
+    # Unmaintained transitive proc-macro dep (no vulnerability); pulled by derive macros and
+    # cannot be replaced from a leaf crate.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained: transitive derive-macro dependency, no vulnerability" },
+    # `idna` arrives via `validator`'s email/URL checks. The punycode edge case does not affect
+    # our use (format validation of user-supplied emails); a fixed idna needs a validator bump
+    # that isn't available on this line yet.
+    { id = "RUSTSEC-2024-0421", reason = "idna punycode edge case via validator email checks; no validator release on this line pulls the fixed idna" },
+    # Unmaintained (folded into rustls-pki-types); transitive via the rustls TLS stack.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained: transitive via the rustls TLS stack, no vulnerability" },
+    # Freshly-disclosed rustls-webpki cert-validation advisories with no patched release yet;
+    # reachable only when validating a malicious X.509 certificate. TLS here targets internal
+    # services (Postgres / OTLP collector) inside the cluster boundary. Revisit and drop these
+    # once a fixed `rustls-webpki` ships.
+    { id = "RUSTSEC-2026-0049", reason = "rustls-webpki CRL authority matching: no fixed release yet; internal-only TLS" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki URI name constraints: no fixed release yet; internal-only TLS" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki wildcard name constraints: no fixed release yet; internal-only TLS" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki CRL parsing panic: no fixed release yet; internal-only TLS" },
+]
 
 # ---------------------------------------------------------------------------
 # Licenses — allowlist. The tree is pure-Rust with permissive licensing.
@@ -38,6 +62,13 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Unicode-DFS-2016",
+    # Weak (file-level) copyleft — imposes no obligation on our own source when used as a
+    # dependency. Historically pulled by `webpki-roots`.
+    "MPL-2.0",
+    # Permissive; transitive `foldhash` (a `hashbrown` dependency).
+    "Zlib",
+    # Permissive data license; current `webpki-roots` (TLS trust anchors) uses it.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 # Per-crate license clarifications (e.g. ring's multi-license file) go here.
@@ -53,6 +84,9 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Our internal workspace crates are path dependencies (no semver version), which register as
+# wildcards; that's expected and safe for in-tree crates. Third-party `*` deps remain denied.
+allow-wildcard-paths = true
 highlight = "all"
 # Prefer the workspace to declare features rather than enabling them by default.
 workspace-default-features = "allow"
