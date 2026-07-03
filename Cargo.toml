@@ -86,7 +86,7 @@ metrics = "0.23"
 # `default-features = false` drops the built-in hyper/rustls HTTP listener and push-gateway
 # (which pulled an old `rustls-webpki`/`rustls-pemfile`); we expose `/metrics` through our own
 # axum server via `install_recorder()` + `render()`, so the core recorder is all we need.
-metrics-exporter-prometheus = { version = "0.15", default-features = false }
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 # ---- resilience ----
 backon = "0.4"
