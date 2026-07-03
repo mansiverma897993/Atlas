@@ -102,3 +102,10 @@ Docker; `tests/load/` needs [k6].
   hops ([ADR-0012](./docs/adr/0012-observability-otel.md)).
 - **Scope discipline** — every non-goal is a recorded decision, not an oversight
   ([ARCHITECTURE §10](./docs/ARCHITECTURE.md#10-explicit-non-goals-scope-discipline)).
+
+## License
+
+Atlas is licensed under the **Apache License 2.0**. See [LICENSE](./LICENSE) for the full
+text.
+
+Copyright (c) 2026 Mansi Verma.
