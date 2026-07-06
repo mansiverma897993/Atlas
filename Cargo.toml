@@ -38,6 +38,10 @@ axum = { version = "0.7", features = ["ws", "macros"] }
 tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = ["trace", "cors", "request-id", "timeout", "limit"] }
 hyper = { version = "1", features = ["full"] }
+# Client helper (connection pool + legacy Client) and body-collection utilities for the
+# gateway's JWKS fetcher. Pure-Rust; already in the dependency tree via tonic/axum.
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
 http = "1"
 
 # ---- gRPC ----

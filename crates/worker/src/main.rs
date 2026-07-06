@@ -154,7 +154,24 @@ async fn main() -> anyhow::Result<()> {
     health.mark_started();
 
     // ---- HTTP (health / metrics / admin) ----
-    let admin_token = std::env::var(ADMIN_TOKEN_ENV).unwrap_or_else(|_| "changeme".to_string());
+    // The admin token guards the destructive DLQ-replay endpoint. Never ship a default secret to
+    // a real environment: require it explicitly outside `local`, and reject the placeholder.
+    let run_env = std::env::var("RUN_ENV").unwrap_or_else(|_| "local".into());
+    let admin_token = match std::env::var(ADMIN_TOKEN_ENV) {
+        Ok(t) if !t.trim().is_empty() && t != "changeme" => t,
+        _ if run_env != "local" => {
+            anyhow::bail!(
+                "{ADMIN_TOKEN_ENV} must be set to a non-default value when RUN_ENV={run_env}: it \
+                 guards POST /admin/dlq/replay/:topic (a destructive operation)"
+            );
+        }
+        _ => {
+            tracing::warn!(
+                "{ADMIN_TOKEN_ENV} unset; using the insecure default 'changeme' (local/dev only)"
+            );
+            "changeme".to_string()
+        }
+    };
     let http_state = HttpState {
         health: health.clone(),
         metrics: telemetry.prometheus.clone(),

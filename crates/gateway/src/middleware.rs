@@ -93,6 +93,36 @@ pub async fn metrics_mw(req: Request, next: Next) -> Response {
     res
 }
 
+/// Attach a conservative set of security response headers to every response (defense-in-depth
+/// at the internet-facing edge). Values are static and side-effect-free; the CSP is permissive
+/// enough for the bundled Swagger UI (`/swagger`) while still constraining the JSON surface.
+pub async fn security_headers_mw(req: Request, next: Next) -> Response {
+    const HEADERS: &[(&str, &str)] = &[
+        ("x-content-type-options", "nosniff"),
+        ("x-frame-options", "DENY"),
+        ("referrer-policy", "no-referrer"),
+        // Legacy XSS auditor off (modern guidance; CSP is the real control).
+        ("x-xss-protection", "0"),
+        // HSTS is honoured only over HTTPS (ignored on plaintext), so it is safe to always send;
+        // production terminates TLS at the ingress in front of the gateway.
+        ("strict-transport-security", "max-age=31536000; includeSubDomains"),
+        (
+            "content-security-policy",
+            "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; \
+             img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
+        ),
+    ];
+
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    for (name, value) in HEADERS {
+        headers
+            .entry(HeaderName::from_static(name))
+            .or_insert_with(|| HeaderValue::from_static(value));
+    }
+    res
+}
+
 /// Verify the RS256 bearer token and attach [`Claims`] to the request extensions.
 pub async fn jwt_mw(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
     let header = req
