@@ -97,7 +97,7 @@ backon = "0.4"
 governor = "0.6"
 
 # ---- scheduler ----
-tokio-cron-scheduler = "0.10"
+tokio-cron-scheduler = "0.15"
 
 # ---- openapi ----
 utoipa = { version = "4", features = ["axum_extras", "chrono", "uuid"] }
