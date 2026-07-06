@@ -50,7 +50,7 @@ prost = "0.12"
 prost-types = "0.12"
 
 # ---- data stores ----
-sqlx = { version = "0.8", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros",
 ] }
 redis = { version = "0.25", default-features = false, features = [
