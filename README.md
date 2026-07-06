@@ -6,10 +6,17 @@
 > cloud-native operations.
 >
 > **Status: implemented.** A Cargo workspace of 5 service binaries + 6 shared libraries. The
-> whole workspace compiles, `cargo clippy` is clean, `cargo fmt --check` passes, and **119
+> whole workspace compiles, `cargo clippy` is clean, `cargo fmt --check` passes, and **122
 > tests pass** — including an in-process end-to-end transfer test and a conservation property
 > test over randomized schedules. Local run and cloud deploy are wired
 > (`deploy/docker-compose.yml`, `deploy/k8s/`). See [roadmap](./docs/ROADMAP.md) for phases.
+>
+> The full authentication chain runs out of the box in production: identity signs with a stable
+> RSA key (`APP__JWT__PRIVATE_KEY_PEM`), the gateway auto-fetches and refreshes its JWKS, the
+> public auth surface is rate-limited and bounded, security headers are emitted at the edge, and
+> `RUN_ENV=production` fails fast on insecure defaults. Everything a human must supply — DB URLs,
+> keys, tokens — is in **[docs/PRODUCTION_SETUP.md](./docs/PRODUCTION_SETUP.md)** (and the
+> printable **[Manual-Setup-Guide.pdf](./Manual-Setup-Guide.pdf)**).
 
 ## Why a ledger?
 
@@ -79,6 +86,7 @@ Docker; `tests/load/` needs [k6].
 | **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** | The authoritative system design: contexts, communication, resilience, observability, security, config, deployment. |
 | **[docs/DOMAIN.md](./docs/DOMAIN.md)** | The ledger DDD model: aggregates, value objects, events, commands, invariants, the transfer saga, read models. |
 | **[docs/ROADMAP.md](./docs/ROADMAP.md)** | Phased delivery plan (0–7) with acceptance criteria per phase. |
+| **[docs/PRODUCTION_SETUP.md](./docs/PRODUCTION_SETUP.md)** | Everything you must supply by hand — DB URLs, JWT keys, tokens, hostnames — to run locally and in prod. |
 | **[docs/adr/](./docs/adr)** | Architecture Decision Records — the *why* behind every major choice. |
 
 ## Technology

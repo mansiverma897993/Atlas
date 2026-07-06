@@ -12,6 +12,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use http::StatusCode;
 use tower::ServiceBuilder;
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -45,12 +46,22 @@ pub fn build(state: AppState, request_timeout: Duration) -> Router {
                 .layer(TimeoutLayer::new(request_timeout)),
         );
 
-    // ---- public auth surface (no JWT/RBAC/rate-limit) ----
+    // ---- public auth surface (no JWT/RBAC, but still throttled + bounded) ----
+    // These routes are unauthenticated and internet-facing, so they are the brute-force /
+    // credential-stuffing surface. They carry (IP-keyed) rate limiting, a request timeout, and a
+    // small body cap — matching the protection the authenticated `/api` surface gets, minus
+    // JWT/RBAC which don't apply pre-login.
     let public = Router::new()
         .route("/api/auth/register", post(handlers::register))
         .route("/api/auth/login", post(handlers::login))
         .route("/api/auth/refresh", post(handlers::refresh))
-        .route("/api/auth/logout", post(handlers::logout));
+        .route("/api/auth/logout", post(handlers::logout))
+        .layer(
+            ServiceBuilder::new()
+                .layer(from_fn_with_state(state.clone(), mw::rate_limit_mw))
+                .layer(RequestBodyLimitLayer::new(16 * 1024))
+                .layer(TimeoutLayer::new(request_timeout)),
+        );
 
     // ---- health probes ----
     let health = Router::new()
@@ -64,12 +75,13 @@ pub fn build(state: AppState, request_timeout: Duration) -> Router {
         .merge(health)
         .merge(SwaggerUi::new("/swagger").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(state)
-        // ---- outer layers, applied to everything: correlation → trace → metrics ----
+        // ---- outer layers, applied to everything: correlation → trace → metrics → headers ----
         .layer(
             ServiceBuilder::new()
                 .layer(from_fn(mw::correlation_mw))
                 .layer(from_fn(mw::trace_mw))
-                .layer(from_fn(mw::metrics_mw)),
+                .layer(from_fn(mw::metrics_mw))
+                .layer(from_fn(mw::security_headers_mw)),
         )
 }
 
