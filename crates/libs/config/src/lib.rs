@@ -251,12 +251,13 @@ impl AppConfig {
             // layer 3: environment (APP__SECTION__KEY)
             .merge(Env::prefixed("APP__").split("__"))
             .extract()?;
-        cfg.validate()?;
+        let run_env = std::env::var("RUN_ENV").unwrap_or_else(|_| "local".into());
+        cfg.validate(&run_env)?;
         Ok(cfg)
     }
 
-    /// Semantic validation beyond type-checking.
-    fn validate(&self) -> Result<(), ConfigError> {
+    /// Semantic validation beyond type-checking. `run_env` gates the stricter production rules.
+    fn validate(&self, run_env: &str) -> Result<(), ConfigError> {
         if self.database.max_connections < self.database.min_connections {
             return Err(ConfigError::Invalid(
                 "database.max_connections must be >= min_connections".into(),
@@ -277,6 +278,34 @@ impl AppConfig {
                 "log.format must be 'json' or 'pretty'".into(),
             ));
         }
+        // In production, refuse to boot on the built-in local placeholders. Without this a
+        // misconfigured deploy silently targets a localhost database with the weak `app:app`
+        // credentials (the struct defaults) instead of failing fast.
+        if run_env == "production" {
+            self.validate_production()?;
+        }
+        Ok(())
+    }
+
+    /// Extra validation applied only when `RUN_ENV=production`: the insecure local defaults must
+    /// have been overridden by real secrets/config.
+    fn validate_production(&self) -> Result<(), ConfigError> {
+        let url = &self.database.url;
+        if url.contains("localhost") || url.contains("127.0.0.1") {
+            return Err(ConfigError::Invalid(
+                "database.url points at localhost in production — set APP__DATABASE__URL to the managed instance".into(),
+            ));
+        }
+        if url.contains("app:app@") {
+            return Err(ConfigError::Invalid(
+                "database.url uses the default 'app:app' credentials in production — supply real credentials".into(),
+            ));
+        }
+        if self.jwt.issuer == "https://identity.local" {
+            return Err(ConfigError::Invalid(
+                "jwt.issuer is still the local default in production — set APP__JWT__ISSUER".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -288,7 +317,26 @@ mod tests {
     #[test]
     fn defaults_are_valid() {
         let cfg = AppConfig::default();
-        assert!(cfg.validate().is_ok());
+        assert!(cfg.validate("local").is_ok());
+    }
+
+    #[test]
+    fn production_rejects_local_defaults() {
+        // The struct defaults (localhost + app:app + identity.local) must not survive a
+        // production boot.
+        let cfg = AppConfig::default();
+        assert!(matches!(
+            cfg.validate("production"),
+            Err(ConfigError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn production_accepts_real_config() {
+        let mut cfg = AppConfig::default();
+        cfg.database.url = "postgres://svc:s3cr3t@db.internal:5432/ledger_db".into();
+        cfg.jwt.issuer = "https://identity.example.com".into();
+        assert!(cfg.validate("production").is_ok());
     }
 
     #[test]

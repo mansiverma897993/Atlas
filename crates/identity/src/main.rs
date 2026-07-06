@@ -69,17 +69,46 @@ async fn main() -> anyhow::Result<()> {
         .context("connecting to redpanda")?;
     let publisher = Arc::new(KafkaPublisher::new(kafka));
 
-    // ---- JWT issuer: generate an in-memory RSA keypair at startup (ADR-0009). See
-    // `application::jwt` for the rationale and the production key-loading alternative. ----
-    let jwt = Arc::new(
-        JwtIssuer::generate(
-            cfg.jwt.issuer.clone(),
-            cfg.jwt.audience.clone(),
-            cfg.jwt.access_ttl_seconds,
-        )
-        .context("generating JWT signing key")?,
-    );
-    tracing::info!("RS256 signing key generated; JWKS served at /.well-known/jwks.json");
+    // ---- JWT issuer (ADR-0009) ----
+    // Production supplies a STABLE RSA signing key via `APP__JWT__PRIVATE_KEY_PEM` (secret) so
+    // tokens survive restarts and every replica signs with one shared identity. When the env is
+    // absent we fall back to generating an ephemeral in-memory key — fine for local/dev, but
+    // fatal to a multi-replica prod deploy, so we hard-fail that fallback outside `local`.
+    let run_env = std::env::var("RUN_ENV").unwrap_or_else(|_| "local".into());
+    let jwt = Arc::new(match std::env::var("APP__JWT__PRIVATE_KEY_PEM") {
+        Ok(pem) if !pem.trim().is_empty() => {
+            let issuer = JwtIssuer::from_private_pem(
+                &pem,
+                cfg.jwt.issuer.clone(),
+                cfg.jwt.audience.clone(),
+                cfg.jwt.access_ttl_seconds,
+            )
+            .context("loading APP__JWT__PRIVATE_KEY_PEM")?;
+            tracing::info!(
+                "RS256 signing key loaded from secret; JWKS served at /.well-known/jwks.json"
+            );
+            issuer
+        }
+        _ if run_env != "local" => {
+            anyhow::bail!(
+                "APP__JWT__PRIVATE_KEY_PEM is required when RUN_ENV={run_env}: refusing to mint \
+                 ephemeral per-instance signing keys in a non-local environment (tokens would \
+                 not survive restarts and replicas would reject each other's tokens)"
+            );
+        }
+        _ => {
+            tracing::warn!(
+                "no APP__JWT__PRIVATE_KEY_PEM set; generating an EPHEMERAL RSA signing key \
+                 (local/dev only — tokens are invalidated on restart and not shared across replicas)"
+            );
+            JwtIssuer::generate(
+                cfg.jwt.issuer.clone(),
+                cfg.jwt.audience.clone(),
+                cfg.jwt.access_ttl_seconds,
+            )
+            .context("generating JWT signing key")?
+        }
+    });
 
     // ---- wire ports (dependency injection) ----
     let users = Arc::new(PgUserRepository::new(pool.clone()));

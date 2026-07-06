@@ -17,7 +17,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use rsa::pkcs1::EncodeRsaPrivateKey;
+use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
+use rsa::pkcs8::DecodePrivateKey;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,10 @@ pub struct JwtIssuer {
 impl JwtIssuer {
     /// Generate a fresh in-memory RSA keypair and build an issuer around it.
     ///
+    /// Tokens minted this way do **not** survive a restart and are not shared across replicas
+    /// (each mints its own key). This is the local/dev path; production should supply a stable
+    /// key via [`from_private_pem`](Self::from_private_pem).
+    ///
     /// `access_ttl_seconds` comes from `cfg.jwt.access_ttl_seconds`.
     pub fn generate(
         issuer: impl Into<String>,
@@ -72,7 +77,39 @@ impl JwtIssuer {
     ) -> anyhow::Result<Self> {
         let mut rng = rand::thread_rng();
         let private = RsaPrivateKey::new(&mut rng, 2048)?;
-        let public = RsaPublicKey::from(&private);
+        Self::from_rsa_key(&private, issuer, audience, access_ttl_seconds)
+    }
+
+    /// Build an issuer around a **stable** RSA private key supplied as PEM (the production
+    /// path — ADR-0009). Accepts both PKCS#8 (`BEGIN PRIVATE KEY`) and PKCS#1
+    /// (`BEGIN RSA PRIVATE KEY`) encodings. Because the key is fixed, tokens survive restarts
+    /// and every replica shares one signing identity (one `kid`), so verifiers see a stable
+    /// JWKS. Wire it from `APP__JWT__PRIVATE_KEY_PEM` at the composition root.
+    pub fn from_private_pem(
+        pem: &str,
+        issuer: impl Into<String>,
+        audience: impl Into<String>,
+        access_ttl_seconds: u64,
+    ) -> anyhow::Result<Self> {
+        let private = RsaPrivateKey::from_pkcs8_pem(pem)
+            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(pem))
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "parsing APP__JWT__PRIVATE_KEY_PEM (expected PKCS#8 or PKCS#1 RSA PEM): {e}"
+                )
+            })?;
+        Self::from_rsa_key(&private, issuer, audience, access_ttl_seconds)
+    }
+
+    /// Assemble the issuer from an already-parsed RSA private key (shared by
+    /// [`generate`](Self::generate) and [`from_private_pem`](Self::from_private_pem)).
+    fn from_rsa_key(
+        private: &RsaPrivateKey,
+        issuer: impl Into<String>,
+        audience: impl Into<String>,
+        access_ttl_seconds: u64,
+    ) -> anyhow::Result<Self> {
+        let public = RsaPublicKey::from(private);
 
         // jsonwebtoken signs from a PEM private key.
         let pem = private.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)?;
@@ -84,7 +121,8 @@ impl JwtIssuer {
         let decoding = DecodingKey::from_rsa_components(&jwk_n, &jwk_e)
             .map_err(|e| anyhow::anyhow!("building decoding key: {e}"))?;
 
-        // A stable `kid`: a truncated SHA-256 thumbprint of the modulus.
+        // A stable `kid`: a truncated SHA-256 thumbprint of the modulus. Deterministic in the
+        // key, so a given signing key always advertises the same `kid` across restarts/replicas.
         let kid = {
             let digest = Sha256::digest(public.n().to_bytes_be());
             digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
@@ -187,6 +225,36 @@ mod tests {
         // A different issuer has a different keypair, so the signature must fail.
         let other = issuer();
         assert!(other.validate(&token).is_err());
+    }
+
+    #[test]
+    fn fixed_pem_yields_a_stable_shared_identity() {
+        use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+
+        // A single private key, as it would arrive from a secret (PKCS#8 PEM).
+        let mut rng = rand::thread_rng();
+        let key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let pem = key.to_pkcs8_pem(LineEnding::LF).unwrap();
+
+        // Two "replicas" loading the same key must share one signing identity.
+        let a = JwtIssuer::from_private_pem(&pem, "https://identity.local", "ledger-platform", 900)
+            .unwrap();
+        let b = JwtIssuer::from_private_pem(&pem, "https://identity.local", "ledger-platform", 900)
+            .unwrap();
+        assert_eq!(a.kid, b.kid, "same key must advertise the same kid");
+
+        // A token minted by replica A verifies on replica B (cross-replica validity).
+        let (token, _) = a.issue("user-1", &[], &[]).unwrap();
+        assert!(
+            b.validate(&token).is_ok(),
+            "token must verify across replicas"
+        );
+
+        // Malformed PEM is rejected rather than silently generating a throwaway key.
+        assert!(
+            JwtIssuer::from_private_pem("not a pem", "i", "a", 900).is_err(),
+            "invalid key material must fail closed"
+        );
     }
 
     #[test]

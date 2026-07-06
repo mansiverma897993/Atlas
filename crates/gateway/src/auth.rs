@@ -4,12 +4,11 @@
 //! Identity's **public** signing keys. The [`KeySource`] trait is the seam over *where* those
 //! keys come from:
 //!
-//! * [`JwksKeySource`] — the **production** path: an in-memory cache of keys fetched from the
-//!   issuer's JWKS endpoint (`cfg.jwt.jwks_url`), selected by the token's `kid`. Refreshing
-//!   the cache requires an HTTP client; to keep the workspace on a pure-Rust, no-C-toolchain
-//!   dependency set (no `reqwest`), the fetch itself is left as an injection point
-//!   ([`JwksKeySource::load_from_json`]) — a production build wires an HTTP fetcher (or a
-//!   sidecar-mounted JWKS file) to call it. The JWK→key conversion is implemented and tested.
+//! * [`JwksKeySource`] — the **production** path: an in-memory cache of keys keyed by the token's
+//!   `kid`, populated from the issuer's JWKS endpoint (`cfg.jwt.jwks_url`). The background
+//!   fetcher in [`crate::jwks_fetcher`] loads it at boot and refreshes it on a timer via
+//!   [`JwksKeySource::load_from_json`]; the cache is shared with the fetcher through
+//!   `Arc<JwksKeySource>`. Pure-Rust HTTP (hyper), no C toolchain.
 //! * [`StaticPemKeySource`] — an operational fallback used when `APP__JWT__PUBLIC_KEY_PEM`
 //!   supplies the RSA public key directly (handy for local/dev and for environments where the
 //!   key is delivered as a mounted secret rather than fetched).
@@ -18,7 +17,7 @@
 //! the choice.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use async_trait::async_trait;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
@@ -148,15 +147,28 @@ impl JwksKeySource {
         for jwk in &jwks.keys {
             map.insert(jwk.kid.clone(), jwk_to_key(jwk)?);
         }
-        *self.keys.write().expect("jwks lock poisoned") = map;
+        // Recover from a poisoned lock rather than panicking a request/refresh: the cache is a
+        // plain key map, so a writer that panicked mid-update left no torn invariant.
+        *self.keys.write().unwrap_or_else(PoisonError::into_inner) = map;
         Ok(())
+    }
+
+    /// Number of keys currently cached (used by the fetcher for readiness logging). A cache of
+    /// zero means protected routes 401 until the first successful JWKS load.
+    #[must_use]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.keys
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 }
 
 #[async_trait]
 impl KeySource for JwksKeySource {
     async fn key_for(&self, kid: Option<&str>) -> Result<DecodingKey, AuthError> {
-        let keys = self.keys.read().expect("jwks lock poisoned");
+        let keys = self.keys.read().unwrap_or_else(PoisonError::into_inner);
         match kid {
             Some(kid) => keys
                 .get(kid)
@@ -166,6 +178,16 @@ impl KeySource for JwksKeySource {
             None if keys.len() == 1 => Ok(keys.values().next().cloned().expect("len==1")),
             None => Err(AuthError::UnknownKey(None)),
         }
+    }
+}
+
+/// Share one cache between the verifier and the background refresher: the fetcher holds an
+/// `Arc<JwksKeySource>` and calls [`load_from_json`](JwksKeySource::load_from_json) on a timer,
+/// while the verifier reads through the same `Arc` for every request.
+#[async_trait]
+impl KeySource for Arc<JwksKeySource> {
+    async fn key_for(&self, kid: Option<&str>) -> Result<DecodingKey, AuthError> {
+        (**self).key_for(kid).await
     }
 }
 

@@ -18,6 +18,7 @@ mod context;
 mod dto;
 mod error;
 mod handlers;
+mod jwks_fetcher;
 mod middleware;
 mod openapi;
 mod rbac;
@@ -69,21 +70,33 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(identity = %upstreams.identity, ledger = %upstreams.ledger, "gRPC upstreams");
     let clients = Clients::connect(&upstreams).context("building gRPC clients")?;
 
-    // ---- JWT verification key source (JWKS in prod; PEM fallback via env) ----
-    let key_source: Box<dyn KeySource> = match std::env::var("APP__JWT__PUBLIC_KEY_PEM") {
-        Ok(pem) if !pem.trim().is_empty() => Box::new(
-            StaticPemKeySource::from_pem(&pem).context("parsing APP__JWT__PUBLIC_KEY_PEM")?,
-        ),
-        _ => {
-            tracing::warn!(
-                jwks_url = %cfg.jwt.jwks_url,
-                "no APP__JWT__PUBLIC_KEY_PEM set; starting with an EMPTY JWKS cache. \
-                 Protected routes will 401 until keys are loaded — production wires an HTTP \
-                 JWKS fetcher (or a mounted JWKS file) to JwksKeySource::load_from_json."
-            );
-            Box::new(JwksKeySource::empty())
-        }
-    };
+    // ---- JWT verification key source ----
+    // Production default: verify against Identity's JWKS, fetched over HTTP and refreshed on a
+    // timer by `jwks_fetcher` (spawned below once the shutdown token exists). A static PEM in
+    // `APP__JWT__PUBLIC_KEY_PEM` overrides this (out-of-mesh / air-gapped key delivery).
+    let (key_source, jwks_source): (Box<dyn KeySource>, Option<Arc<JwksKeySource>>) =
+        match std::env::var("APP__JWT__PUBLIC_KEY_PEM") {
+            Ok(pem) if !pem.trim().is_empty() => {
+                tracing::info!(
+                    "verifying tokens with a static RSA public key (APP__JWT__PUBLIC_KEY_PEM)"
+                );
+                (
+                    Box::new(
+                        StaticPemKeySource::from_pem(&pem)
+                            .context("parsing APP__JWT__PUBLIC_KEY_PEM")?,
+                    ),
+                    None,
+                )
+            }
+            _ => {
+                tracing::info!(
+                    jwks_url = %cfg.jwt.jwks_url,
+                    "verifying tokens via JWKS fetched from the identity service (auto-refreshing)"
+                );
+                let source = Arc::new(JwksKeySource::empty());
+                (Box::new(source.clone()), Some(source))
+            }
+        };
     let verifier = Arc::new(JwtVerifier::new(
         key_source,
         &cfg.jwt.issuer,
@@ -118,6 +131,13 @@ async fn main() -> anyhow::Result<()> {
 
     // ---- run API + metrics servers under one shutdown token ----
     let cancel = CancellationToken::new();
+
+    // Background JWKS refresher (only when verifying via JWKS, not a static PEM).
+    let jwks_task = jwks_source.map(|source| {
+        let refresh = Duration::from_secs(env_u64("APP__JWT__JWKS_REFRESH_SECONDS", 300));
+        jwks_fetcher::spawn(source, cfg.jwt.jwks_url.clone(), refresh, cancel.clone())
+    });
+
     let request_timeout = Duration::from_secs(env_u64("APP__SERVER__REQUEST_TIMEOUT_SECONDS", 15));
     let app = router::build(state, request_timeout);
 
@@ -135,6 +155,9 @@ async fn main() -> anyhow::Result<()> {
     let grace = cfg.server.shutdown_grace();
     let _ = tokio::time::timeout(grace, async {
         let _ = tokio::join!(api, metrics);
+        if let Some(task) = jwks_task {
+            let _ = task.await;
+        }
     })
     .await;
     telemetry::shutdown();
