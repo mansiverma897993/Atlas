@@ -84,7 +84,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-opentelemetry = "0.25"
 opentelemetry = "0.24"
 opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.16"
 metrics = "0.23"
 # `default-features = false` drops the built-in hyper/rustls HTTP listener and push-gateway
