@@ -86,7 +86,7 @@ opentelemetry = "0.24"
 opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.16"
-metrics = "0.23"
+metrics = "0.24"
 # `default-features = false` drops the built-in hyper/rustls HTTP listener and push-gateway
 # (which pulled an old `rustls-webpki`/`rustls-pemfile`); we expose `/metrics` through our own
 # axum server via `install_recorder()` + `render()`, so the core recorder is all we need.
