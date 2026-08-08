@@ -1,4 +1,4 @@
-# Ledger Platform — a production-grade, event-sourced payments backend in Rust
+# Ledger Platform a production-grade, event-sourced payments backend in Rust
 
 > An enterprise-grade, event-sourced **double-entry ledger / payments** backend, built to
 > demonstrate senior backend & distributed-systems engineering: DDD, hexagonal architecture,
