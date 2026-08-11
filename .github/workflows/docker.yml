@@ -33,6 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Image references must be lowercase; github.repository can contain
+      # uppercase (e.g. .../Atlas), which breaks the Trivy scan reference.
+      - name: Lowercase image namespace
+        run: echo "IMAGE_NAMESPACE=${IMAGE_NAMESPACE,,}" >> "$GITHUB_ENV"
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to registry
