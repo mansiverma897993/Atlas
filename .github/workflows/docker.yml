@@ -12,6 +12,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Needed to push images to GHCR with the built-in GITHUB_TOKEN.
+  packages: write
 
 env:
   # Container registry (override REGISTRY_* via repo secrets). Defaults to GHCR.
@@ -37,8 +39,10 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          # Fall back to the built-in token for GHCR when no custom
+          # registry secrets are configured.
+          username: ${{ secrets.REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
 
       - name: Compute tags & labels
         id: meta
