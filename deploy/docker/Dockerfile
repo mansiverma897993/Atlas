@@ -31,6 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev \
         protobuf-compiler \
         ca-certificates \
+        # utoipa-swagger-ui's build script fetches the Swagger UI bundle
+        curl \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --locked
 WORKDIR /app
