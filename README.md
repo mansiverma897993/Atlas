@@ -14,7 +14,7 @@ patterns, and cloud-native operations.
 
 **Status: implemented.** A Cargo workspace of 5 service binaries and 6 shared libraries.
 The whole workspace compiles, `cargo clippy` is clean, `cargo fmt --check` passes, and
-**122 tests pass** — including an in-process end-to-end transfer test and a conservation
+**122 tests pass** including an in-process end-to-end transfer test and a conservation
 property test over randomized schedules. Local run and cloud deploy are wired
 (`deploy/docker-compose.yml`, `deploy/k8s/`). See the [roadmap](./docs/ROADMAP.md) for phases.
 
