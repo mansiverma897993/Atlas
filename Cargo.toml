@@ -101,7 +101,7 @@ tokio-cron-scheduler = "0.10"
 
 # ---- openapi ----
 utoipa = { version = "4", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "7", features = ["axum"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 # ---- errors ----
 thiserror = "1"
