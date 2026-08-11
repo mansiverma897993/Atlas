@@ -48,26 +48,26 @@ retries**, and **immutable audit**.
 
 ```mermaid
 flowchart LR
-    C[Clients] -->|HTTPS / WSS| GW[API Gateway<br/>REST · OpenAPI · JWT verify<br/>rate limit · circuit breaker]
+    C["Clients"] -->|"HTTPS, WSS"| GW["API Gateway<br>REST, OpenAPI, JWT verify<br>rate limit, circuit breaker"]
 
-    GW -->|gRPC| ID[Identity<br/>AuthN/Z · Argon2id<br/>JWT/JWKS · RBAC · OAuth2]
-    GW -->|gRPC| LG[Ledger<br/>event-sourced double-entry<br/>ES + CQRS + saga]
-    C -->|WebSocket| NT[Notification<br/>fan-out hub · presence]
+    GW -->|"gRPC"| ID["Identity<br>AuthN and AuthZ, Argon2id<br>JWT, JWKS, RBAC, OAuth2"]
+    GW -->|"gRPC"| LG["Ledger<br>event-sourced double-entry<br>ES, CQRS, saga"]
+    C -->|"WebSocket"| NT["Notification<br>fan-out hub, presence"]
 
-    ID -- events --> BUS[(Redpanda<br/>event backbone)]
-    LG -- events --> BUS
-    BUS -- consume --> NT
-    BUS -- consume --> WK[Worker<br/>saga · projections<br/>scheduler · DLQ monitor]
-    WK -- commands --> LG
+    ID -->|"events"| BUS[("Redpanda<br>event backbone")]
+    LG -->|"events"| BUS
+    BUS -->|"consume"| NT
+    BUS -->|"consume"| WK["Worker<br>saga, projections<br>scheduler, DLQ monitor"]
+    WK -->|"commands"| LG
 
-    ID --- PG[(PostgreSQL<br/>db per context)]
+    ID --- PG[("PostgreSQL<br>db per context")]
     LG --- PG
     WK --- PG
-    GW --- RD[(Redis<br/>cache · locks · rate-limit)]
+    GW --- RD[("Redis<br>cache, locks, rate limit")]
 
-    subgraph Observability
-        OT[OpenTelemetry] --> JG[Jaeger]
-        OT --> PM[Prometheus] --> GF[Grafana]
+    subgraph OBS ["Observability"]
+        OT["OpenTelemetry"] --> JG["Jaeger"]
+        OT --> PM["Prometheus"] --> GF["Grafana"]
     end
 ```
 
@@ -91,7 +91,7 @@ sequenceDiagram
     participant Worker
     participant Notification
 
-    Client->>Gateway: POST /api/transfers (idempotency key)
+    Client->>Gateway: POST /api/transfers with idempotency key
     Gateway->>Ledger: gRPC InitiateTransfer
     Ledger->>Ledger: reserve on source account
     Ledger-->>Bus: TransferInitiated
@@ -102,8 +102,8 @@ sequenceDiagram
     Worker->>Ledger: capture on source
     Ledger-->>Bus: TransferCompleted
     Bus-->>Notification: TransferCompleted
-    Notification-->>Client: WebSocket push (both parties)
-    Note over Worker,Ledger: any step fails → compensating<br/>commands roll the saga back
+    Notification-->>Client: WebSocket push to both parties
+    Note over Worker,Ledger: if any step fails, compensating<br>commands roll the saga back
 ```
 
 ## Getting started

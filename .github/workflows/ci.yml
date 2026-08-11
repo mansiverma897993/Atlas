@@ -105,7 +105,9 @@ jobs:
       APP__REDIS__URL: redis://localhost:6379
       APP__KAFKA__BROKERS: localhost:9092
       APP__LOG__LEVEL: info
-      APP__LOG__FORMAT: json
+      # No APP__LOG__FORMAT here: the config unit tests assert the file layer
+      # (config/src/lib.rs file_layer_is_read) and a process-wide env override
+      # shadows it.
       # sqlx CLI reads this.
       DATABASE_URL: postgres://app:app@localhost:5432/ledger_db
 
