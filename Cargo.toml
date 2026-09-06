@@ -68,7 +68,7 @@ argon2 = "0.5"
 jsonwebtoken = "9"
 rand = "0.8"
 sha2 = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 
 # ---- domain primitives ----
 uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
