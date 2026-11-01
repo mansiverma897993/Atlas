@@ -2,10 +2,10 @@
 
 **A production-grade, event-sourced payments ledger backend in Rust.**
 
-[![CI](https://github.com/mansiverma897993/Atlas/actions/workflows/ci.yml/badge.svg)](https://github.com/mansiverma897993/Atlas/actions/workflows/ci.yml)
 [![Docker](https://github.com/mansiverma897993/Atlas/actions/workflows/docker.yml/badge.svg)](https://github.com/mansiverma897993/Atlas/actions/workflows/docker.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Rust 1.96](https://img.shields.io/badge/rust-1.96-orange.svg)](./rust-toolchain.toml)
+[![CI](https://github.com/mansiverma897993/Atlas/actions/workflows/ci.yml/badge.svg)](https://github.com/mansiverma897993/Atlas/actions/workflows/ci.yml)
 
 An enterprise-grade, event-sourced **double-entry ledger / payments** backend built to
 demonstrate senior backend and distributed-systems engineering: Domain-Driven Design,
