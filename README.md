@@ -38,7 +38,7 @@ property test over randomized schedules. Local run and cloud deploy are wired
 ## Why a ledger?
 
 Because a payments ledger is the domain where the "senior" patterns are **load-bearing, not
-decorative**. A ledger that loses, duplicates, or reorders a posting is broken — that
+decorative**. A ledger that loses, duplicates, or reorders a posting is broken that
 constraint is what forces Event Sourcing, CQRS, sagas, idempotency, distributed locking, and
 dead-letter queues to be real rather than checklist items. The system exists to protect four
 invariants: **conservation** (`Σ debits = Σ credits`), **no double-spend**, **idempotent
@@ -74,12 +74,12 @@ flowchart LR
 Five services, each an independent bounded context: the **gateway** is the only public
 surface; **identity**, **ledger**, and **notification** own their domains; the **worker**
 coordinates sagas, projections, and scheduled jobs over the Redpanda event backbone. Each
-context owns its own PostgreSQL database — there are no shared tables.
+context owns its own PostgreSQL database there are no shared tables.
 
 ## How a transfer flows
 
 A transfer is a **saga**: reserve on source → credit destination → capture on source, with
-compensation on failure — coordinated over the event backbone, observable as a single
+compensation on failure coordinated over the event backbone, observable as a single
 distributed trace, and delivered live to both parties over WebSocket.
 
 ```mermaid
@@ -118,7 +118,7 @@ sequenceDiagram
 | [k6](https://k6.io) | optional | load / smoke tests |
 
 No system `protoc` (vendored), no C compiler or `librdkafka` (pure-Rust `rskafka`), and no
-native TLS (`rustls`) are required — the workspace builds with the stock Rust toolchain.
+native TLS (`rustls`) are required the workspace builds with the stock Rust toolchain.
 
 ### Build and test
 
@@ -193,7 +193,7 @@ the edge, and `RUN_ENV=production` fails fast on insecure defaults (localhost DB
 credentials, placeholder tokens).
 
 Everything an operator must supply by hand — database URLs, JWT keys, admin tokens,
-hostnames, TLS — is documented step-by-step in
+hostnames, TLS is documented step-by-step in
 **[docs/PRODUCTION_SETUP.md](./docs/PRODUCTION_SETUP.md)** (also available as the printable
 **[Manual-Setup-Guide.pdf](./Manual-Setup-Guide.pdf)**), ending with a production-readiness
 checklist. Kubernetes manifests live in [`deploy/k8s/`](./deploy/k8s) (kustomize base +
@@ -244,15 +244,15 @@ openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
 ## Engineering principles
 
 - **Domain-Driven Design** with explicit bounded contexts and a ubiquitous language.
-- **Hexagonal architecture** — pure domain, ports as traits, adapters at the edge, DI at the
+- **Hexagonal architecture** pure domain, ports as traits, adapters at the edge, DI at the
   composition root ([ADR-0002](./docs/adr/0002-hexagonal-architecture.md)).
 - **Event Sourcing + CQRS**, scoped deliberately to where they pay for themselves
   ([ADR-0003](./docs/adr/0003-event-sourcing-scope.md), [ADR-0004](./docs/adr/0004-cqrs.md)).
-- **Resilience by construction** — timeouts, retries with backoff, circuit breakers,
+- **Resilience by construction** timeouts, retries with backoff, circuit breakers,
   bulkheads, rate limits, DLQ.
-- **Observability by construction** — one distributed trace per transfer across sync and async
+- **Observability by construction** one distributed trace per transfer across sync and async
   hops ([ADR-0012](./docs/adr/0012-observability-otel.md)).
-- **Scope discipline** — every non-goal is a recorded decision, not an oversight
+- **Scope discipline** every non-goal is a recorded decision, not an oversight
   ([ARCHITECTURE §10](./docs/ARCHITECTURE.md#10-explicit-non-goals-scope-discipline)).
 
 ## Contributing
